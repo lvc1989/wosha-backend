@@ -33,7 +33,8 @@ const uploadsDir = path.join(__dirname, "..", "uploads");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
 
 const app = express();
-app.use(cors({ origin: process.env.CORS_ORIGIN?.split(",") || "*" }));
+const corsOrigin = process.env.CORS_ORIGIN;
+app.use(cors({ origin: !corsOrigin || corsOrigin === "*" ? "*" : corsOrigin.split(",") }));
 app.use(express.json({ limit: "5mb" }));
 
 // Static file serving — only used as a fallback when real cloud storage isn't configured (see .env.example)
