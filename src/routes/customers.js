@@ -1,0 +1,84 @@
+import express from "express";
+import { pool } from "../db/pool.js";
+import { requireAuth } from "../middleware/auth.js";
+
+const router = express.Router();
+
+router.get("/", requireAuth, async (req, res) => {
+  const { search, limit, offset } = req.query;
+  const conditions = [];
+  const params = [];
+  if (search?.trim()) {
+    params.push(`%${search.trim()}%`);
+    conditions.push(`(c.name ILIKE $${params.length} OR c.phone ILIKE $${params.length})`);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const safeLimit = Math.min(Number(limit) || 200, 500);
+  const safeOffset = Number(offset) || 0;
+  const countParams = [...params];
+  params.push(safeLimit, safeOffset);
+
+  const { rows } = await pool.query(`
+    SELECT c.*, COALESCE(json_agg(v.*) FILTER (WHERE v.id IS NOT NULL), '[]') AS vehicles
+    FROM customers c
+    LEFT JOIN vehicles v ON v.customer_id = c.id
+    ${where}
+    GROUP BY c.id ORDER BY c.created_at DESC
+    LIMIT $${params.length - 1} OFFSET $${params.length}
+  `, params);
+
+  const { rows: countRows } = await pool.query(`SELECT COUNT(*) FROM customers c ${where}`, countParams);
+  res.set("X-Total-Count", countRows[0].count);
+  res.json(rows);
+});
+
+router.post("/", requireAuth, async (req, res) => {
+  const { name, phone, email, tag, customData, vehicle } = req.body;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      "INSERT INTO customers (name, phone, email, tag, custom_data) VALUES ($1,$2,$3,$4,$5) RETURNING *",
+      [name, phone, email, tag || "First-time", customData || {}]
+    );
+    if (vehicle?.plate) {
+      await client.query(
+        "INSERT INTO vehicles (customer_id, plate, make, model, color) VALUES ($1,$2,$3,$4,$5)",
+        [rows[0].id, vehicle.plate, vehicle.make, vehicle.model, vehicle.color]
+      );
+    }
+    await client.query("COMMIT");
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error(err);
+    res.status(500).json({ error: "Couldn't add customer." });
+  } finally {
+    client.release();
+  }
+});
+
+router.put("/:id", requireAuth, async (req, res) => {
+  const { name, phone, email, tag, customData, segments } = req.body;
+  const { rows } = await pool.query(
+    `UPDATE customers SET
+      name = COALESCE($1, name), phone = COALESCE($2, phone), email = COALESCE($3, email),
+      tag = COALESCE($4, tag), custom_data = COALESCE($5, custom_data), segments = COALESCE($6, segments)
+     WHERE id = $7 RETURNING *`,
+    [name, phone, email, tag, customData, segments, req.params.id]
+  );
+  if (!rows[0]) return res.status(404).json({ error: "Customer not found." });
+  res.json(rows[0]);
+});
+
+router.post("/:id/vehicles", requireAuth, async (req, res) => {
+  const { plate, make, model, color } = req.body;
+  const { rows } = await pool.query(
+    "INSERT INTO vehicles (customer_id, plate, make, model, color) VALUES ($1,$2,$3,$4,$5) RETURNING *",
+    [req.params.id, plate, make, model, color]
+  );
+  res.status(201).json(rows[0]);
+});
+
+export default router;
