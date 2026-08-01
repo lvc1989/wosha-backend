@@ -290,6 +290,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   reviewed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT now()
 );
+ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check;
+ALTER TABLE tasks ADD CONSTRAINT tasks_status_check
+  CHECK (status IN ('Open','In Progress','Submitted','Done','Rejected'));
 
 -- ---------- Compliance & tax deadlines ----------
 CREATE TABLE IF NOT EXISTS tax_items (
@@ -372,6 +375,13 @@ CREATE TABLE IF NOT EXISTS categories (
   created_at TIMESTAMPTZ DEFAULT now(),
   UNIQUE (type, name)
 );
+-- Repairs an already-existing categories table from before 'supplier'/'task_template'
+-- were added to the allowed list — CREATE TABLE IF NOT EXISTS above does nothing if
+-- the table already exists, so without this, the seed data below fails with
+-- "categories_type_check" on any database that was deployed before this change.
+ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_type_check;
+ALTER TABLE categories ADD CONSTRAINT categories_type_check
+  CHECK (type IN ('service','product','expense','purchase_order','client_segment','cashflow','supplier','task_template'));
 INSERT INTO categories (type, name) VALUES
   ('supplier','Car Wash Chemicals'), ('supplier','Car Accessories'), ('supplier','Tools & Equipment'),
   ('task_template','Deep-clean waiting area'), ('task_template','Restock chemicals'), ('task_template','Equipment maintenance check'),
@@ -402,6 +412,9 @@ CREATE TABLE IF NOT EXISTS custom_field_defs (
   field_name TEXT NOT NULL,
   created_at TIMESTAMPTZ DEFAULT now()
 );
+ALTER TABLE custom_field_defs DROP CONSTRAINT IF EXISTS custom_field_defs_entity_type_check;
+ALTER TABLE custom_field_defs ADD CONSTRAINT custom_field_defs_entity_type_check
+  CHECK (entity_type IN ('customer','staff','booking','branch'));
 
 -- ---------- Notification preferences (built-in toggles + owner-added custom categories) ----------
 CREATE TABLE IF NOT EXISTS notification_prefs (
@@ -525,6 +538,76 @@ CREATE TABLE IF NOT EXISTS restore_points (
   snapshot JSONB NOT NULL,
   created_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- ============================================================================
+-- REPAIR MIGRATIONS — bring an already-existing database fully up to date.
+--
+-- CREATE TABLE IF NOT EXISTS only does something on a brand-new database — if
+-- the table already exists (which it will, on any database that's been
+-- deployed before and is just being redeployed with newer code), it's a
+-- complete no-op, even if columns or constraints were added to that table's
+-- definition since. That's what caused the "categories_type_check" deploy
+-- failure: 'task_template' was added to the allowed list in the CREATE TABLE
+-- statement above, but on a database where `categories` already existed, that
+-- change never actually applied — the old, narrower constraint stayed in
+-- place and rejected the seed data.
+--
+-- Every ALTER below is safe to run on every single deploy, on any database,
+-- old or brand new: ADD COLUMN IF NOT EXISTS does nothing if the column's
+-- already there, and the constraint drop-and-recreate pattern just re-applies
+-- the current rules every time, converging any existing database to the
+-- exact same state as a fresh install.
+-- ============================================================================
+
+ALTER TABLE locations ADD COLUMN IF NOT EXISTS custom_data JSONB DEFAULT '{}';
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS title TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_primary_owner BOOLEAN DEFAULT false;
+
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS segments TEXT[] DEFAULT '{}';
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS custom_data JSONB DEFAULT '{}';
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id);
+
+ALTER TABLE products ADD COLUMN IF NOT EXISTS par_level NUMERIC(14,2) DEFAULT 0;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS sellable BOOLEAN DEFAULT false;
+
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS payment_terms TEXT DEFAULT 'Full payment';
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_invoice_url TEXT;
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS delivery_note_url TEXT;
+
+ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS received_qty NUMERIC(14,2) DEFAULT 0;
+ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS matched_barcode TEXT;
+
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS bill_to TEXT;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS company_tin TEXT;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS company_address TEXT;
+
+ALTER TABLE team_messages ADD COLUMN IF NOT EXISTS attachment_type TEXT;
+ALTER TABLE team_messages ADD COLUMN IF NOT EXISTS attachment_name TEXT;
+ALTER TABLE team_messages ADD COLUMN IF NOT EXISTS downloaded BOOLEAN DEFAULT false;
+ALTER TABLE team_messages ADD COLUMN IF NOT EXISTS downloaded_at TIMESTAMPTZ;
+ALTER TABLE team_messages ADD COLUMN IF NOT EXISTS saved_location_note TEXT;
+
+ALTER TABLE client_messages ADD COLUMN IF NOT EXISTS attachment_type TEXT;
+ALTER TABLE client_messages ADD COLUMN IF NOT EXISTS attachment_name TEXT;
+ALTER TABLE client_messages ADD COLUMN IF NOT EXISTS downloaded BOOLEAN DEFAULT false;
+ALTER TABLE client_messages ADD COLUMN IF NOT EXISTS downloaded_at TIMESTAMPTZ;
+ALTER TABLE client_messages ADD COLUMN IF NOT EXISTS saved_location_note TEXT;
+
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS attachment_url TEXT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS attachment_name TEXT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMPTZ;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS review_comment TEXT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS reviewed_by UUID REFERENCES users(id);
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
+
+ALTER TABLE business_settings ADD COLUMN IF NOT EXISTS logo_size TEXT DEFAULT 'md';
+ALTER TABLE business_settings ADD COLUMN IF NOT EXISTS tagline TEXT DEFAULT '';
+ALTER TABLE business_settings ADD COLUMN IF NOT EXISTS staff_attachments_enabled BOOLEAN DEFAULT true;
+ALTER TABLE business_settings ADD COLUMN IF NOT EXISTS client_attachments_enabled BOOLEAN DEFAULT true;
+ALTER TABLE business_settings ADD COLUMN IF NOT EXISTS mission TEXT DEFAULT '';
+ALTER TABLE business_settings ADD COLUMN IF NOT EXISTS vision TEXT DEFAULT '';
+ALTER TABLE business_settings ADD COLUMN IF NOT EXISTS org_structure TEXT DEFAULT '';
 
 -- ---------- Indexes for common lookups ----------
 CREATE INDEX IF NOT EXISTS idx_bookings_location ON bookings(location_id);
