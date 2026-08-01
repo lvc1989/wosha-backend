@@ -93,19 +93,20 @@ router.patch("/client/:id/mark-downloaded", requireAuth, async (req, res) => {
 router.post("/client-bulk", requireAuth, async (req, res) => {
   const { segment, text } = req.body;
   const { rows: customers } = await pool.query("SELECT id, name, phone FROM customers WHERE $1 = ANY(segments)", [segment]);
-  const client = await pool.connect();
+  if (!customers.length) return res.json({ ok: true, count: 0, customers: [] });
   try {
-    await client.query("BEGIN");
-    for (const c of customers) {
-      await client.query("INSERT INTO client_messages (customer_id, sender, text) VALUES ($1,'staff',$2)", [c.id, text]);
-    }
-    await client.query("COMMIT");
+    // One statement for the whole batch instead of one round-trip per customer —
+    // this stays fast whether the segment has 5 customers or 5,000.
+    const customerIds = customers.map((c) => c.id);
+    await pool.query(
+      `INSERT INTO client_messages (customer_id, sender, text)
+       SELECT unnest($1::uuid[]), 'staff', $2`,
+      [customerIds, text]
+    );
     res.json({ ok: true, count: customers.length, customers });
   } catch (err) {
-    await client.query("ROLLBACK");
+    console.error(err);
     res.status(500).json({ error: "Couldn't send to the group." });
-  } finally {
-    client.release();
   }
 });
 

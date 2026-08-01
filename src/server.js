@@ -6,6 +6,17 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 
+// Without these, a single unhandled promise rejection anywhere in the app — a typo'd
+// .then() with no .catch(), a stray async callback — terminates the entire Node
+// process by default in modern Node versions, taking down every logged-in user's
+// session at once instead of just failing the one request that caused it.
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled promise rejection (server stayed up):", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught exception (server stayed up):", err);
+});
+
 import authRoutes from "./routes/auth.js";
 import locationRoutes from "./routes/locations.js";
 import customerRoutes from "./routes/customers.js";
@@ -32,6 +43,11 @@ import poCatalogRoutes from "./routes/poCatalog.js";
 import attachmentPermissionRoutes from "./routes/attachmentPermissions.js";
 import generalManagerRoutes from "./routes/generalManagers.js";
 import manualJobRoutes from "./routes/manualJobs.js";
+import payrollRateRoutes from "./routes/payrollRates.js";
+import backupRoutes from "./routes/backup.js";
+import messageTemplateRoutes from "./routes/messageTemplates.js";
+import incomingPaymentRoutes from "./routes/incomingPayments.js";
+import supplierPaymentRoutes from "./routes/supplierPayments.js";
 import { requireAuth } from "./middleware/auth.js";
 import { storeFile, storageConfigured } from "./utils/storage.js";
 
@@ -90,6 +106,11 @@ app.use("/api/po-catalog", poCatalogRoutes);
 app.use("/api/attachment-permissions", attachmentPermissionRoutes);
 app.use("/api/general-managers", generalManagerRoutes);
 app.use("/api/manual-jobs", manualJobRoutes);
+app.use("/api/payroll-rates", payrollRateRoutes);
+app.use("/api/backup", backupRoutes);
+app.use("/api/message-templates", messageTemplateRoutes);
+app.use("/api/incoming-payments", incomingPaymentRoutes);
+app.use("/api/supplier-payments", supplierPaymentRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err);

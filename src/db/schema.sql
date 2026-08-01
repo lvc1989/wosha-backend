@@ -141,6 +141,8 @@ CREATE TABLE IF NOT EXISTS invoices (
   payment_method TEXT,
   control_number TEXT,
   bill_to TEXT,                      -- for company invoices
+  company_tin TEXT,
+  company_address TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -344,17 +346,36 @@ CREATE TABLE IF NOT EXISTS attachment_permissions (
 
 -- ---------- Generic managed categories — one system for every category list in the app
 -- (service categories, product categories, expense categories, PO categories, client
+-- ---------- Payroll rate items — configurable employer-cost add-ons (NSSF, WCF, SDL,
+-- or any custom cost), each individually toggleable and editable, not hardcoded ----------
+CREATE TABLE IF NOT EXISTS payroll_rate_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  rate_percent NUMERIC(6,3) NOT NULL,
+  enabled BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+INSERT INTO payroll_rate_items (name, rate_percent)
+SELECT * FROM (VALUES
+  ('NSSF (employer)', 10.0::numeric),
+  ('SDL', 3.5::numeric),
+  ('WCF', 0.6::numeric)
+) AS v(name, rate_percent)
+WHERE NOT EXISTS (SELECT 1 FROM payroll_rate_items);
+
 -- segments, cash flow categories), matching the prototype's single reusable category
 -- manager pattern instead of a bespoke table per module. ----------
 CREATE TABLE IF NOT EXISTS categories (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  type TEXT NOT NULL CHECK (type IN ('service','product','expense','purchase_order','client_segment','cashflow','supplier')),
+  type TEXT NOT NULL CHECK (type IN ('service','product','expense','purchase_order','client_segment','cashflow','supplier','task_template')),
   name TEXT NOT NULL,
   created_at TIMESTAMPTZ DEFAULT now(),
   UNIQUE (type, name)
 );
 INSERT INTO categories (type, name) VALUES
   ('supplier','Car Wash Chemicals'), ('supplier','Car Accessories'), ('supplier','Tools & Equipment'),
+  ('task_template','Deep-clean waiting area'), ('task_template','Restock chemicals'), ('task_template','Equipment maintenance check'),
+  ('task_template','Renew business license'), ('task_template','File VAT return'), ('task_template','Safety inspection'),
   ('service','Car Wash'), ('service','Carpet Cleaning'), ('service','Detailing'),
   ('product','Consumable'), ('product','Retail'), ('product','Equipment'),
   ('expense','Utilities'), ('expense','Equipment'), ('expense','Rent'), ('expense','Payroll'),
@@ -377,7 +398,7 @@ CREATE TABLE IF NOT EXISTS po_catalog_items (
 -- ---------- Custom fields (owner-defined extra fields, e.g. for customers) ----------
 CREATE TABLE IF NOT EXISTS custom_field_defs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  entity_type TEXT NOT NULL DEFAULT 'customer' CHECK (entity_type IN ('customer','staff','booking')),
+  entity_type TEXT NOT NULL DEFAULT 'customer' CHECK (entity_type IN ('customer','staff','booking','branch')),
   field_name TEXT NOT NULL,
   created_at TIMESTAMPTZ DEFAULT now()
 );
@@ -431,6 +452,80 @@ SELECT * FROM (VALUES
 ) AS v(category, amount)
 WHERE NOT EXISTS (SELECT 1 FROM budget_lines);
 
+-- ---------- Message templates — quick-send library for Client Messages
+-- (Booking reminder, Ready for pickup, Thank you, Promotion, custom event names) ----------
+CREATE TABLE IF NOT EXISTS message_templates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+INSERT INTO message_templates (name, body)
+SELECT * FROM (VALUES
+  ('Booking reminder', 'Hi {name}, this is a reminder about your upcoming booking with Wosha. See you soon!'),
+  ('Ready for pickup', 'Hi {name}, your vehicle is ready for pickup at Wosha. Thank you for your patience!'),
+  ('Thank you', 'Hi {name}, thank you for choosing Wosha! We hope to see you again soon.'),
+  ('Promotion', 'Hi {name}, check out our latest promotion at Wosha — ask us in-branch for details!')
+) AS v(name, body)
+WHERE NOT EXISTS (SELECT 1 FROM message_templates);
+
+-- ---------- Incoming payment reconciliation — bank transfer, mobile money, or control
+-- number payments logged as "expected", then confirmed (manually, or automatically via
+-- a Flutterwave webhook if the business configures their own merchant credentials) —
+-- confirming one creates a real income entry in cash flow automatically. ----------
+CREATE TABLE IF NOT EXISTS incoming_payments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  method TEXT NOT NULL CHECK (method IN ('Bank Transfer','Mobile Money','Control Number')),
+  reference_code TEXT,
+  amount NUMERIC(14,2) NOT NULL,
+  customer_id UUID REFERENCES customers(id),
+  invoice_id UUID REFERENCES invoices(id),
+  location_id UUID REFERENCES locations(id),
+  status TEXT DEFAULT 'Pending' CHECK (status IN ('Pending','Confirmed')),
+  notes TEXT,
+  created_by UUID REFERENCES users(id),
+  confirmed_by UUID REFERENCES users(id),
+  confirmed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- ---------- Supplier / vendor payments — with a receipt attachment that follows the
+-- same download-then-reclaim-storage pattern as message attachments, so a paid
+-- receipt's file doesn't sit taking up space forever once it's been saved elsewhere. ----------
+CREATE TABLE IF NOT EXISTS supplier_payments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  supplier_id UUID REFERENCES suppliers(id),
+  po_id UUID REFERENCES purchase_orders(id),
+  amount NUMERIC(14,2) NOT NULL,
+  method TEXT,
+  receipt_url TEXT,
+  receipt_name TEXT,
+  downloaded BOOLEAN DEFAULT false,
+  downloaded_at TIMESTAMPTZ,
+  saved_location_note TEXT,
+  paid_at TIMESTAMPTZ DEFAULT now(),
+  created_by UUID REFERENCES users(id)
+);
+
+-- ---------- Restock requests — staff can flag a product that's about to run out
+-- (distinct from the automatic reorder-level/par-level alerts, since staff often
+-- notice a shortage before the numbers cross a threshold) ----------
+CREATE TABLE IF NOT EXISTS restock_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  product_id UUID REFERENCES products(id),
+  requested_by UUID REFERENCES users(id),
+  note TEXT,
+  status TEXT DEFAULT 'Open' CHECK (status IN ('Open','Fulfilled')),
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- ---------- Quick restore point — one-tap snapshot/rollback, no file needed ----------
+CREATE TABLE IF NOT EXISTS restore_points (
+  id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  snapshot JSONB NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
 -- ---------- Indexes for common lookups ----------
 CREATE INDEX IF NOT EXISTS idx_bookings_location ON bookings(location_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_location ON invoices(location_id);
@@ -443,3 +538,12 @@ CREATE INDEX IF NOT EXISTS idx_po_location ON purchase_orders(location_id);
 CREATE INDEX IF NOT EXISTS idx_staff_location ON staff(location_id);
 CREATE INDEX IF NOT EXISTS idx_cash_entries_location ON cash_entries(location_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_location ON tasks(location_id);
+-- Added to support date-range pagination (Bookings/Invoicing/Reports) and Job Board —
+-- without these, those queries do a full table scan that gets slower as history grows.
+CREATE INDEX IF NOT EXISTS idx_bookings_created_at ON bookings(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_invoices_created_at ON invoices(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bookings_technician ON bookings(technician_id);
+CREATE INDEX IF NOT EXISTS idx_manual_jobs_location ON manual_jobs(location_id);
+CREATE INDEX IF NOT EXISTS idx_manual_jobs_technician ON manual_jobs(technician_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date);

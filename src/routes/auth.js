@@ -98,6 +98,18 @@ router.post("/change-password", requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+router.put("/profile", requireAuth, async (req, res) => {
+  const { name, phone, email, profilePic } = req.body;
+  const { rows } = await pool.query(
+    `UPDATE users SET name = COALESCE($1,name), phone = COALESCE($2,phone),
+     email = COALESCE($3,email), profile_pic = COALESCE($4,profile_pic)
+     WHERE id = $5 RETURNING id, name, username, email, phone, role, title, is_primary_owner, location_id, profile_pic`,
+    [name, phone, email, profilePic, req.user.id]
+  );
+  const u = rows[0];
+  res.json({ id: u.id, name: u.name, username: u.username, email: u.email, phone: u.phone, role: u.role, title: u.title, isPrimaryOwner: u.is_primary_owner, locationId: u.location_id, profilePic: u.profile_pic });
+});
+
 // ---- Forgot password: request a code ----
 router.post("/forgot-password/request", async (req, res) => {
   const { identifier, channel } = req.body; // channel: 'email' or 'sms'
@@ -149,7 +161,9 @@ router.get("/me", requireAuth, async (req, res) => {
     "SELECT id, name, username, email, phone, role, title, is_primary_owner, location_id, profile_pic FROM users WHERE id = $1",
     [req.user.id]
   );
-  res.json(rows[0]);
+  const u = rows[0];
+  if (!u) return res.status(404).json({ error: "Account not found." });
+  res.json({ id: u.id, name: u.name, username: u.username, email: u.email, phone: u.phone, role: u.role, title: u.title, isPrimaryOwner: u.is_primary_owner, locationId: u.location_id, profilePic: u.profile_pic });
 });
 
 export default router;

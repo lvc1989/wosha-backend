@@ -54,6 +54,33 @@ router.patch("/:id/adjust-qty", requireAuth, async (req, res) => {
   res.json(rows[0]);
 });
 
+// Staff flags a product as about to run out — separate from the automatic
+// reorder-level/par-level alerts, since staff often notice this before the numbers do.
+router.post("/:id/request-restock", requireAuth, async (req, res) => {
+  const { note } = req.body;
+  const { rows } = await pool.query(
+    "INSERT INTO restock_requests (product_id, requested_by, note) VALUES ($1,$2,$3) RETURNING *",
+    [req.params.id, req.user.id, note || null]
+  );
+  res.status(201).json(rows[0]);
+});
+
+router.get("/restock-requests/open", requireAuth, async (req, res) => {
+  const { rows } = await pool.query(`
+    SELECT rr.*, p.name AS product_name, p.qty, u.name AS requested_by_name
+    FROM restock_requests rr
+    JOIN products p ON p.id = rr.product_id
+    LEFT JOIN users u ON u.id = rr.requested_by
+    WHERE rr.status = 'Open' ORDER BY rr.created_at DESC
+  `);
+  res.json(rows);
+});
+
+router.patch("/restock-requests/:id/fulfill", requireAuth, requireRole("owner", "manager"), async (req, res) => {
+  const { rows } = await pool.query("UPDATE restock_requests SET status = 'Fulfilled' WHERE id = $1 RETURNING *", [req.params.id]);
+  res.json(rows[0]);
+});
+
 router.delete("/:id", requireAuth, requireRole("owner", "manager"), async (req, res) => {
   await pool.query("DELETE FROM products WHERE id = $1", [req.params.id]);
   res.json({ ok: true });

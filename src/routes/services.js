@@ -4,6 +4,12 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 
 const router = express.Router();
 
+// Public — lets the guest booking form show the price list without requiring login.
+router.get("/public", async (req, res) => {
+  const { rows } = await pool.query("SELECT id, name, category, price, duration_min FROM services WHERE active = true ORDER BY category, name");
+  res.json(rows);
+});
+
 router.get("/", requireAuth, async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM services WHERE active = true ORDER BY category, name");
   res.json(rows);

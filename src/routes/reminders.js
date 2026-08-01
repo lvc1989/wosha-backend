@@ -29,6 +29,19 @@ router.get("/", requireAuth, async (req, res) => {
       "SELECT id, name, qty, reorder_level FROM products WHERE qty <= reorder_level"
     )).rows;
     lowStock.forEach((p) => items.push({ id: "stock-" + p.id, kind: "Stock", label: `Low stock: ${p.name} (${p.qty} left)`, urgent: true }));
+
+    // A second, earlier warning: par_level is the target restock amount, so hitting
+    // 25% of it is often a useful heads-up before the harder reorder_level line is
+    // crossed — catches a product that's trending toward empty a bit sooner.
+    const nearingEmpty = (await pool.query(
+      "SELECT id, name, qty, par_level FROM products WHERE par_level > 0 AND qty <= par_level * 0.25 AND qty > reorder_level"
+    )).rows;
+    nearingEmpty.forEach((p) => items.push({ id: "stock-25pct-" + p.id, kind: "Stock", label: `${p.name} is down to ${p.qty} — 25% of its restock target (${p.par_level})`, urgent: false }));
+
+    const openRequests = (await pool.query(
+      `SELECT rr.id, p.name AS product_name FROM restock_requests rr JOIN products p ON p.id = rr.product_id WHERE rr.status = 'Open'`
+    )).rows;
+    openRequests.forEach((r) => items.push({ id: "restock-req-" + r.id, kind: "Stock", label: `Staff flagged "${r.product_name}" as running out`, urgent: true }));
   }
 
   const pendingExpenses = (await pool.query(

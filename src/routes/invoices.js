@@ -11,7 +11,7 @@ router.get("/", requireAuth, async (req, res) => {
   const params = [];
   if (locationId && locationId !== "all") { params.push(locationId); conditions.push(`i.location_id = $${params.length}`); }
   if (from) { params.push(from); conditions.push(`i.created_at >= $${params.length}`); }
-  if (to) { params.push(to); conditions.push(`i.created_at <= $${params.length}`); }
+  if (to) { params.push(to); conditions.push(`i.created_at < $${params.length}::date + interval '1 day'`); }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
   const safeLimit = Math.min(Number(limit) || 200, 500);
@@ -35,7 +35,7 @@ router.get("/", requireAuth, async (req, res) => {
 
 // Create an invoice directly from a basket of items (Record Sale) or from a completed booking.
 router.post("/", requireAuth, async (req, res) => {
-  const { bookingId, locationId, items, discountPercent, taxPercent, billTo } = req.body;
+  const { bookingId, locationId, items, discountPercent, taxPercent, billTo, companyTIN, companyAddress } = req.body;
   if (!items?.length) return res.status(400).json({ error: "At least one line item is required." });
 
   const subtotal = items.reduce((s, it) => s + it.rate * it.qty, 0);
@@ -48,9 +48,9 @@ router.post("/", requireAuth, async (req, res) => {
   try {
     await client.query("BEGIN");
     const { rows } = await client.query(
-      `INSERT INTO invoices (booking_id, location_id, subtotal, discount_percent, discount, tax_percent, tax, total, control_number, bill_to)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-      [bookingId || null, locationId, subtotal, discountPercent || 0, discount, taxPercent || 0, tax, total, generateControlNumber(), billTo || null]
+      `INSERT INTO invoices (booking_id, location_id, subtotal, discount_percent, discount, tax_percent, tax, total, control_number, bill_to, company_tin, company_address)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [bookingId || null, locationId, subtotal, discountPercent || 0, discount, taxPercent || 0, tax, total, generateControlNumber(), billTo || null, companyTIN || null, companyAddress || null]
     );
     for (const it of items) {
       await client.query(

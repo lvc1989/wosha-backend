@@ -162,7 +162,7 @@ async function seed() {
     let firstCompletedBookingId = null;
     for (const [locKey, custKey, plate, staffKey, time, status, svcKeys] of bookings) {
       const { rows } = await client.query(
-        "INSERT INTO bookings (location_id, customer_id, reference_note, technician_id, scheduled_time, status) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id",
+        "INSERT INTO bookings (location_id, customer_id, vehicle_plate, technician_id, scheduled_time, status) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id",
         [locRows[locKey], custRows[custKey], plate, staffRows[staffKey], time, status]
       );
       for (const svcKey of svcKeys) {

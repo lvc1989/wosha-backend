@@ -5,13 +5,48 @@ import { requireAuth } from "../middleware/auth.js";
 const router = express.Router();
 const STATUS_FLOW = ["Requested", "Confirmed", "Checked-in", "In Progress", "Completed", "Paid", "Closed"];
 
+// Public — no login required. Matches the prototype's "Continue as Guest" flow.
+router.post("/guest-request", async (req, res) => {
+  const { name, phone, vehiclePlate, locationId, serviceIds, scheduledTime } = req.body;
+  if (!name?.trim() || !phone?.trim() || !serviceIds?.length) {
+    return res.status(400).json({ error: "Name, phone, and at least one service are required." });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    let customer = (await client.query("SELECT * FROM customers WHERE phone = $1", [phone])).rows[0];
+    if (!customer) {
+      const inserted = await client.query(
+        "INSERT INTO customers (name, phone, tag) VALUES ($1,$2,'Guest Lead') RETURNING *",
+        [name, phone]
+      );
+      customer = inserted.rows[0];
+    }
+    const booking = await client.query(
+      `INSERT INTO bookings (location_id, customer_id, vehicle_plate, scheduled_time) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [locationId, customer.id, vehiclePlate, scheduledTime]
+    );
+    for (const sid of serviceIds) {
+      await client.query("INSERT INTO booking_services (booking_id, service_id) VALUES ($1,$2)", [booking.rows[0].id, sid]);
+    }
+    await client.query("COMMIT");
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error(err);
+    res.status(500).json({ error: "Couldn't send the request — please try again." });
+  } finally {
+    client.release();
+  }
+});
+
 router.get("/", requireAuth, async (req, res) => {
   const { locationId, from, to, limit, offset } = req.query;
   const conditions = [];
   const params = [];
   if (locationId && locationId !== "all") { params.push(locationId); conditions.push(`b.location_id = $${params.length}`); }
   if (from) { params.push(from); conditions.push(`b.created_at >= $${params.length}`); }
-  if (to) { params.push(to); conditions.push(`b.created_at <= $${params.length}`); }
+  if (to) { params.push(to); conditions.push(`b.created_at < $${params.length}::date + interval '1 day'`); }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
   // Without an explicit date range, default to the most recent 200 — without this,

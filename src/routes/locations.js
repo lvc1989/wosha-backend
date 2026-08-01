@@ -4,6 +4,12 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 
 const router = express.Router();
 
+// Public — lets the guest booking form show branch choices without requiring login.
+router.get("/public", async (req, res) => {
+  const { rows } = await pool.query("SELECT id, name, color FROM locations ORDER BY created_at");
+  res.json(rows);
+});
+
 router.get("/", requireAuth, async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM locations ORDER BY created_at");
   res.json(rows);
