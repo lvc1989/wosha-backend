@@ -1,0 +1,17 @@
+<svg width="320" height="320" viewBox="0 0 320 320" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>Wosha icon mark (maskable)</title>
+<desc>Full-bleed navy background with the badge mark scaled to fit safely within any OS-applied icon mask shape.</desc>
+
+<rect x="0" y="0" width="320" height="320" fill="#0B1B33"/>
+
+<circle cx="160" cy="160" r="118" fill="none" stroke="#FFC93C" stroke-width="12"/>
+
+<path d="M 90 128 L 122 218 L 160 148 L 198 218 L 230 128"
+      fill="none" stroke="#FFC93C" stroke-width="24"
+      stroke-linecap="round" stroke-linejoin="round"/>
+
+<path d="M 202 82 C 189 82 179 94 179 108 C 179 122 189 133 202 133 C 215 133 225 122 225 108 C 225 94 213 82 202 82 Z"
+      fill="#2B6CF6"/>
+<path d="M 202 89 C 191 89 184 99 184 108 C 184 115 188 119 195 120 C 191 116 190 108 197 101 C 201 97 207 95 212 96 C 209 92 206 89 202 89 Z"
+      fill="#5A8CF5"/>
+</svg>
