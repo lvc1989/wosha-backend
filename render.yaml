@@ -1,0 +1,24 @@
+databases:
+  - name: wosha-db
+    plan: free
+    databaseName: wosha
+    user: wosha
+
+services:
+  - type: web
+    name: wosha-api
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node src/db/migrate.js && npm start
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: wosha-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: PORT
+        value: 4000
+      - key: CORS_ORIGIN
+        value: "*"
